@@ -59,16 +59,80 @@ exports.updateClient = async (req, res, next) => {
 exports.deleteClient = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { role, note } = req.body || {};
+
+    const [rows] = await pool.query('SELECT name FROM clients WHERE id = ?', [id]);
+    const clientName = rows.length ? rows[0].name : `Client #${id}`;
+
+    if (role === 'administration' && (!note || !note.trim())) {
+      return res.status(400).json({ error: 'A reason (note) is required to delete this client.' });
+    }
+
+    await pool.query(
+      `INSERT INTO deletion_logs (entity_type, entity_id, entity_name, deleted_by, note) VALUES (?, ?, ?, ?, ?)`,
+      ['client', id, clientName, role || 'admin', note || null]
+    );
+
     await pool.query('DELETE FROM clients WHERE id = ?', [id]);
     res.json({ message: 'Client deleted successfully.' });
   } catch (err) { next(err); }
 };
 
-// client's own sales history + stats
 exports.getClientHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
     const [sales] = await pool.query('SELECT * FROM sales WHERE client_id = ? ORDER BY created_at DESC', [id]);
     res.json(sales);
+  } catch (err) { next(err); }
+};
+
+exports.getClientFullHistory = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const [clientRows] = await pool.query('SELECT * FROM clients WHERE id = ?', [id]);
+    if (!clientRows.length) return res.status(404).json({ error: 'Client not found.' });
+
+    const [daily] = await pool.query(`
+      SELECT DATE(s.created_at) AS sale_date,
+             SUM(si.qty) AS qty,
+             SUM(si.qty * si.price) AS revenue,
+             SUM(si.qty * (si.price - si.cost)) AS profit
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      WHERE s.client_id = ? AND s.created_at >= NOW() - INTERVAL 30 DAY
+      GROUP BY DATE(s.created_at)
+      ORDER BY sale_date ASC
+    `, [id]);
+
+    const [yearly] = await pool.query(`
+      SELECT YEAR(s.created_at) AS year,
+             SUM(si.qty) AS qty,
+             SUM(si.qty * si.price) AS revenue,
+             SUM(si.qty * (si.price - si.cost)) AS profit
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      WHERE s.client_id = ? AND s.created_at >= NOW() - INTERVAL 5 YEAR
+      GROUP BY YEAR(s.created_at)
+      ORDER BY year ASC
+    `, [id]);
+
+    const [[totals]] = await pool.query(`
+      SELECT COUNT(DISTINCT si.sale_id) AS totalOrders,
+             COALESCE(SUM(si.qty),0) AS totalItems,
+             COALESCE(SUM(si.qty * si.price),0) AS totalRevenue,
+             COALESCE(SUM(si.qty * (si.price - si.cost)),0) AS totalProfit
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      WHERE s.client_id = ?
+    `, [id]);
+
+    const [sales] = await pool.query('SELECT * FROM sales WHERE client_id = ? ORDER BY created_at DESC', [id]);
+    for (const sale of sales) {
+      const [items] = await pool.query('SELECT * FROM sale_items WHERE sale_id = ?', [sale.id]);
+      sale.items = items;
+    }
+
+    res.json({ client: clientRows[0], daily, yearly, totals, transactions: sales });
   } catch (err) { next(err); }
 };

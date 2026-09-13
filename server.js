@@ -7,6 +7,7 @@ const clientsRoutes = require('./routes/clients.routes');
 const salesRoutes = require('./routes/sales.routes');
 const paymentsRoutes = require('./routes/payments.routes');
 const reportsRoutes = require('./routes/reports.routes');
+const auditRoutes = require('./routes/audit.routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -21,6 +22,7 @@ app.use('/api/clients', clientsRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/audit', auditRoutes);
 
 app.use(errorHandler);
 

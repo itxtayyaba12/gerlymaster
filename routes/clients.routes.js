@@ -7,5 +7,6 @@ router.post('/', ctrl.createClient);
 router.put('/:id', ctrl.updateClient);
 router.delete('/:id', ctrl.deleteClient);
 router.get('/:id/history', ctrl.getClientHistory);
+router.get('/:id/full-history', ctrl.getClientFullHistory);
 
 module.exports = router;

@@ -85,3 +85,45 @@ exports.getSaleById = async (req, res, next) => {
     res.json({ ...sale[0], items });
   } catch (err) { next(err); }
 };
+
+// DELETE a sale/invoice — restores stock, ALWAYS logs to deletion_logs.
+// Reason (note) is mandatory only when role === 'administration'; Admin's own deletes are logged without a reason.
+exports.deleteSale = async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { id } = req.params;
+    const { role, note } = req.body || {};
+
+    const [saleRows] = await connection.query('SELECT * FROM sales WHERE id = ?', [id]);
+    if (!saleRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Invoice not found.' });
+    }
+
+    if (role === 'administration' && (!note || !note.trim())) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'A reason (note) is required to delete this invoice.' });
+    }
+
+    await connection.query(
+      `INSERT INTO deletion_logs (entity_type, entity_id, entity_name, deleted_by, note) VALUES (?, ?, ?, ?, ?)`,
+      ['invoice', id, saleRows[0].invoice_no, role || 'admin', note || null]
+    );
+
+    // restore stock for every item in this sale before deleting it
+    const [items] = await connection.query('SELECT * FROM sale_items WHERE sale_id = ?', [id]);
+    for (const item of items) {
+      await connection.query('UPDATE products SET stock = stock + ? WHERE id = ?', [item.qty, item.product_id]);
+    }
+
+    await connection.query('DELETE FROM sales WHERE id = ?', [id]); // sale_items auto-deleted via CASCADE
+    await connection.commit();
+    res.json({ message: 'Invoice deleted successfully.' });
+  } catch (err) {
+    await connection.rollback();
+    next(err);
+  } finally {
+    connection.release();
+  }
+};
